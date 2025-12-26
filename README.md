@@ -8,34 +8,38 @@ some Android device.
 This script queries Google Photos for their original datetime and updates the files accordingly.
 
 ## Setup
+### Python
+This script was made with Python 3.13.3. If you have the `.venv` folder already, you can run
+`.venv\Scripts\activate.bat` to use the right Python environment.
+
 ### win32-setctime
-Requires the "win32-setctime" python library, I couldn't find another way to set file
-creation time: `pip install win32-setctime`
+Requires the [win32-setctime](https://pypi.org/project/win32-setctime/) python library, I couldn't
+find another way to set file creation time: `pip install win32-setctime`
 
 ### Google API
 Set up a project in the Google API Console: https://console.developers.google.com/apis/library.
 
-Enable Google Photos Library API.
+[Enable Google Photos Picker API](https://developers.google.com/photos/overview/configure-your-app).
 
 Create a Desktop oauth client. Save the secret as `client_secret.json` in the same folder as this script.
 
-In Data Access, give it these scopes: `/auth/photoslibrary.readonly.originals`, `/auth/photoslibrary`,
-and `./auth/photoslibrary.readonly`. There's probably more restrictive scopes that work, send a PR if you find them.
+In Data Access, give it the `.../auth/photospicker.mediaitems.readonly` scope.
 
 ## Usage
-This script only works with a single Album in your Google Photos, not your entire photos stream.
+Start a cmd window in the script's folder. Run the script without any parameters. Input the folder containing
+the media files when it asks for it.
+A browser window will open for you to log into your Google account. Then the Photo Picker browser window
+will open, select all photos you want to update the timestamp for.
 
-Fill in the `album_id` and `folder_path` variables in the script (couldn't be bothered to take them as
-input, send a PR if you want.)
+You can choose a maximum of 2000 items. If you need to update more than that, simply re-run the script
+and select the next batch of photos. The script will only update the media items for the photos you choose.
 
-You can find the album ID in the URL of the album in Google Photos, or by running the script with the `album_id` variable empty to list all albums and their IDs.
-
-Run the script to update the files' timestamp to the corresponding ones in the album.
-
-You can optionally set DELETE_MISSING_FILES to True to delete files that were not found in the album.
-This can happen with iOS Live Photos videos. I didn't need them when creating this script, you
-could amend it to set the Live Photo videos to the same date as the photo. Send a PR if you want.
+The script will then update the timestamps on all the media files you chose according to what is recorded
+in Google Photos.
 
 ## Version
+**2.0** - Picker API Migration. Moved from Google Photos Library API to Google Photos Picker API due to
+[Google Photos Library API access rights deprecation](https://developers.googleblog.com/en/google-photos-picker-api-launch-and-library-api-updates/).
+
 **1.0** - Initial version. Haven't bothered cleaning it up, it will create a temp "all_data.json" file 
 to cache the album data, so it doesn't have to be downloaded every time for debugging purposes.

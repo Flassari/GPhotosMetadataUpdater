@@ -1,147 +1,143 @@
 # Read the README.md file for instructions on how to use this script.
-# This script sets the creation date of files in a folder based on their metadata from a Google Photos album.
+# This script sets the creation date of files in a folder based on their metadata from Google Photos.
+# Uses the Photos Picker API for selecting media items.
 
 import os
+import webbrowser
+from datetime import datetime
+from google_auth_oauthlib.flow import InstalledAppFlow
+import requests
 
-DELETE_MISSING_FILES = False # Set to True to delete files that are not in the album
+# Ask the user to input the folder path
+folder_path = ""
+while not folder_path:
+	folder_path = input("Enter the path to the folder containing the files you want to update: ")
+	if not folder_path:
+		print("Error: Folder path cannot be empty.")
+	elif not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+		print("Error: Folder path does not exist or is not a directory.")
+		folder_path = ""
 
-album_id='' # <- Fill this with the ID of the album you want to extract metadata from.
-# You can find the album ID in the URL of the album in Google Photos, or by using the script to list all albums.
-# If you leave it empty, the script will list all albums and ask you to pick one.
+print(f"\nFolder path: {folder_path}\n")
 
-folder_path = "" # <- Fill this with the path to the folder containing the files you want to set the creation date for.
+print("Authenticating with Google Photos...")
+SCOPES = ['https://www.googleapis.com/auth/photospicker.mediaitems.readonly']
+flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
+creds = flow.run_local_server(port=8080)
+access_token = creds.token
+print(f"Authenticated! Access token: {access_token}")
 
-all_album_items = {}
+# Create a Picker session
+print("Creating Picker session...")
+resp = requests.post(
+	f'https://photospicker.googleapis.com/v1/sessions',
+	headers={
+		'Authorization': f'Bearer {access_token}',
+		'Content-Type': 'application/json'
+	}
+)
 
-def extract_album_info(album_id):
-	from google_auth_oauthlib.flow import InstalledAppFlow
-	from googleapiclient.discovery import build
-	from google.oauth2.credentials import Credentials
-	from google.auth.transport.requests import Request
+# Open the Picker URL in the default web browser
+session_id = resp.json()['id']
+picker_url = resp.json()['pickerUri']
+if picker_url:
+	print(f"Opening Picker URL: {picker_url}")
+	webbrowser.open(picker_url)
+else:
+	print("Error: No pickerUri returned from session creation.")
+	exit(1)
 
-	# Auth flow
-	SCOPES = ['https://www.googleapis.com/auth/photoslibrary']
-	creds = None
-	if os.path.exists('authtoken.cached.json'):
-		creds = Credentials.from_authorized_user_file('authtoken.cached.json', SCOPES)
-	if not creds or not creds.valid:
-		if creds and creds.expired and creds.refresh_token:
-			creds.refresh(Request())
-		else:
-			flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
-			creds = flow.run_local_server(port=8080)
-		# Save the credentials for the next run
-		with open('authtoken.cached.json', 'w') as token:
-			token.write(creds.to_json())
+print("Press ENTER after you have completed your selection in the Picker...")
+input()
 
-	# Build the API service
-	service = build('photoslibrary', 'v1', credentials=creds, static_discovery=False)
+# Fetch media metadata for selected items
+print("Fetching media items...")
+nextpage_token = ''
+timestamps = {}
+while True:
+	print("Fetching a page of media items...")
+	mediaitems_response = requests.get(
+		f'https://photospicker.googleapis.com/v1/mediaItems?sessionId={session_id}&pageSize=100&pageToken={nextpage_token}',
+		headers={
+			'Authorization': f'Bearer {access_token}',
+			'Content-Type': 'application/json'
+		}
+	)
 
-	if album_id is None:
-		# Get a list of all photo albums
-		albums_results = service.albums().list(pageSize=100).execute()
-		albums = albums_results.get('albums', [])
+	if mediaitems_response.status_code == 200:
+		media_items = mediaitems_response.json()['mediaItems']
+		for picked_media_item in media_items:
+			item_id = picked_media_item['id']
+			creation_time = picked_media_item['createTime']
+			filename = picked_media_item['mediaFile']['filename']
+			timestamps[filename] = creation_time
 
-		# Print album details
-		for album in albums:
-			print(album['title'])
-			print(f"\t ID: {album['id']}")
-		
-		print("Pick one of the albums and populate the album_id variable with it.")
+		nextpage_token = mediaitems_response.json().get('nextPageToken')
+
+		if not nextpage_token:
+			break
+	else:
+		print(f"Error fetching media items: {mediaitems_response.status_code} - {mediaitems_response.text}")
 		exit(1)
 
-	# Get the album details
-	album = service.albums().get(albumId=album_id).execute()
+print(timestamps)
 
-	# Print album details
-	print(f"Album title: {album['title']}")
-	print(f"Number of media items: {album['mediaItemsCount']}")
+# Delete the session
+print("Deleting the Picker session...")
+delete_resp = requests.delete(
+	f'https://photospicker.googleapis.com/v1/sessions/{session_id}',
+	headers={
+		'Authorization': f'Bearer {access_token}',
+		'Content-Type': 'application/json'
+	}
+)
 
-	nextPageToken = None
-	current_page = 1
-
-	while True:
-		print(f"Page {current_page}")
-		current_page += 1
-		
-		media_items = service.mediaItems().search(body={'albumId': album_id, 'pageSize': 100, 'pageToken': nextPageToken}).execute()
-		for item in media_items.get('mediaItems', []):
-			if (item['filename'] in all_album_items):
-				print(f"!!!!!!!!!! File {item['filename']} ({item['mimeType']}) already exists in file_dates. Skipping...")
-				continue
-
-			all_album_items[item['filename']] = item
-
-		if not "nextPageToken" in media_items:
-			break
-		nextPageToken = media_items["nextPageToken"]
-
-
-	with open('all_data.json', 'w') as f:
-		import json
-		json.dump(all_album_items, f, indent=4)
-
-def set_file_date(file_name):
-	from datetime import datetime
-	
+# Helper function to update file timestamps
+def set_file_date(file_name, iso_time):
 	file_path = os.path.join(folder_path, file_name)
-	item_info = all_album_items[file_name]
-
-	iso_time = item_info['mediaMetadata']['creationTime']
-	creation_time = 0
-
-	if not item_info:
-		print(f"File {file_name} not found in all_album_items. Skipping...")
+	
+	if not os.path.exists(file_path):
+		print(f"Warning: File {file_name} not found on disk. Skipping...")
 		return
 	
-	# convert ISO 8601 format to timestamp
+	# Parse ISO 8601 timestamp (with or without milliseconds)
 	try:
 		# Attempt to parse with milliseconds
 		creation_time = datetime.strptime(iso_time, "%Y-%m-%dT%H:%M:%S.%fZ").timestamp()
 	except ValueError:
 		# Fallback to parsing without milliseconds
 		creation_time = datetime.strptime(iso_time, "%Y-%m-%dT%H:%M:%SZ").timestamp()
+	
+	# Update file times
+	try:
+		from win32_setctime import setctime
+		setctime(file_path, creation_time)  # Set creation time (Windows)
+		os.utime(file_path, (creation_time, creation_time))  # Set access/modification times
+		print(f"✓ {file_name}: {datetime.fromtimestamp(creation_time)}")
+	except Exception as e:
+		print(f"✗ {file_name}: Failed to set time - {e}")
 
-	from win32_setctime import setctime
-	setctime(file_path, creation_time) # Set creation time
-	os.utime(file_path, (creation_time, creation_time)) # Set access and modification time
-	print(f"Setting file {file_path} creation time to {creation_time}.")
+# Process selected media items
+print(f"\nUpdating file timestamps...\n")
 
+files_updated = 0
+files_skipped = []
 
-# try to read and parse all_data.json
-try:
-	import json
-
-	ITEM_CACHE_FILENAME = 'all_data.json'
-	if os.path.exists(ITEM_CACHE_FILENAME):
-		with open(ITEM_CACHE_FILENAME, 'r') as f:
-			all_album_items = json.load(f)
-except Exception as e:
-	print(f"Couldn't read all_data.json. Error: {e}")
-
-
-if not all_album_items:
-	print("No data found in all_data.json. Downloading it from Google Photos API.")
-	extract_album_info(album_id)
-else:
-	print("Using cached photo album data found in all_data.json. To refresh, delete all_data.json and run the script again.")
-
-actual_files = os.listdir(folder_path)
-no_metadata_files = []
-
-for file in actual_files:
-	if file in all_album_items:
-		set_file_date(file)
+for filename in os.listdir(folder_path):
+	if filename in timestamps:
+		set_file_date(filename, timestamps[filename])
+		files_updated += 1
 	else:
-		no_metadata_files.append(file)
+		files_skipped.append(filename)
 
+# Report results
+print(f"\n{'='*50}")
+print(f"Summary: {files_updated} file(s) updated")
 
-for file in no_metadata_files:
-	if DELETE_MISSING_FILES:
-		print(f"File {file} does not exist in the album. Deleting it.")
-		file_path = os.path.join(folder_path, file)
-		os.remove(file_path)
-	else:
-		print(f"File {file} does not exist in the album. Re-run this script with DELETE_MISSING_FILES set to True to delete it.")
+if files_skipped:
+	print(f"Skipped {len(files_skipped)} file(s) which didn't have a corresponding timestamp in Google (or you didn't choose them in the Picker):")
+	for f in files_skipped:
+		print(f"  - {f}")
 
-print(f"All done!")
+print(f"{'='*50}")
+print("Done!")
