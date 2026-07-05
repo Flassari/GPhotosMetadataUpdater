@@ -1,11 +1,15 @@
-# Google Photos Datetime Metadata Updater
-For fixing datetime metadata for photos and videos downloaded from Google Photos albums.
+# Google Photos Video Downloader
+For downloading videos from Google Photos and fixing their datetime metadata.
 
 ## Summary
-When downloading from Google Photos, the photos/videos might be missing a proper datetime
+Made for my compilation video workflows.
+
+When downloading videos from Google Photos, they might be missing a proper datetime
 stamp from the file and EXIF metadata, stripped by Google Photos. This can happen for
 some Android device.
-This script queries Google Photos for their original datetime and updates the files accordingly.
+
+This script lets you pick up to 2k photos via the Google Photos Picker API,
+downloads only the videos, and also corrects the file's datetime to match the original's.
 
 ## Setup
 ### Python
@@ -14,7 +18,9 @@ This script was made with Python 3.13.3. If you have the `.venv` folder already,
 
 ### win32-setctime
 Requires the [win32-setctime](https://pypi.org/project/win32-setctime/) python library, I couldn't
-find another way to set file creation time: `pip install win32-setctime`
+find another way to set file creation time:
+
+`pip install win32-setctime`
 
 ### Google API
 Set up a project in the Google API Console: https://console.developers.google.com/apis/library.
@@ -26,18 +32,21 @@ Create a Desktop oauth client. Save the secret as `client_secret.json` in the sa
 In Data Access, give it the `.../auth/photospicker.mediaitems.readonly` scope.
 
 ## Usage
-Start a cmd window in the script's folder. Run the script without any parameters. Input the folder containing
-the media files when it asks for it.
-A browser window will open for you to log into your Google account. Then the Photo Picker browser window
-will open, select all photos you want to update the timestamp for.
+Start a cmd window in the script's folder. Run the script without any parameters. Input the
+folder for where to download the video files when it asks for it.
 
-You can choose a maximum of 2000 items. If you need to update more than that, simply re-run the script
-and select the next batch of photos. The script will only update the media items for the photos you choose.
+A browser window will open for you to log into your Google account. Then the Photo Picker
+browser window will open, select all photos/vidoes you want. The script will download
+only videos, and also correct the datetime stamp on them.
 
-The script will then update the timestamps on all the media files you chose according to what is recorded
-in Google Photos.
+You can choose a maximum of 2000 items. This is a Google Photos Picker API limitation.
+If you need to update more than that, simply re-run the script and select the next batch
+of items. The script will not download videos if there is already a same-named one in the
+folder.
 
 ## Version
+**3.0** - The script now also downloads videos from Google Photos, simplifying the workflow.
+
 **2.0** - Picker API Migration. Moved from Google Photos Library API to Google Photos Picker API due to
 [Google Photos Library API access rights deprecation](https://developers.googleblog.com/en/google-photos-picker-api-launch-and-library-api-updates/).
 

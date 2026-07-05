@@ -3,10 +3,14 @@
 # Uses the Photos Picker API for selecting media items.
 
 import os
+import shutil
+import urllib
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from google_auth_oauthlib.flow import InstalledAppFlow
+
 import requests
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 # Ask the user to input the folder path
 folder_path = ""
@@ -50,10 +54,26 @@ else:
 print("Press ENTER after you have completed your selection in the Picker...")
 input()
 
+def filename_exists(file_path):
+	return os.path.exists(file_path)
+
+def unique_filename(file_name):
+	new_file_name = file_name
+	if any(video['filename'] == new_file_name for video in video_items):
+		base_name, ext = os.path.splitext(new_file_name)
+		counter = 1
+		while True:
+			new_file_name = f"{base_name}_{counter}{ext}"
+			if not any(video['filename'] == new_file_name for video in video_items):
+				return new_file_name
+			counter += 1
+	
+	return new_file_name
+
 # Fetch media metadata for selected items
 print("Fetching media items...")
 nextpage_token = ''
-timestamps = {}
+video_items = []
 while True:
 	print("Fetching a page of media items...")
 	mediaitems_response = requests.get(
@@ -67,10 +87,18 @@ while True:
 	if mediaitems_response.status_code == 200:
 		media_items = mediaitems_response.json()['mediaItems']
 		for picked_media_item in media_items:
-			item_id = picked_media_item['id']
-			creation_time = picked_media_item['createTime']
-			filename = picked_media_item['mediaFile']['filename']
-			timestamps[filename] = creation_time
+			if picked_media_item['type'] == "VIDEO":
+				item_status = picked_media_item['mediaFile']['mediaFileMetadata']['videoMetadata']['processingStatus']
+				if item_status != "READY":
+					print(f"Error: Video {picked_media_item['mediaFile']['filename']} is not ready for download (status: {item_status}).")
+					exit(1)
+				
+				video_items.append({
+					'itemId': picked_media_item['id'],
+					'filename': unique_filename(picked_media_item['mediaFile']['filename']),
+					'baseUrl': picked_media_item['mediaFile']['baseUrl'],
+					'creationTime': picked_media_item['createTime']
+				})
 
 		nextpage_token = mediaitems_response.json().get('nextPageToken')
 
@@ -80,7 +108,7 @@ while True:
 		print(f"Error fetching media items: {mediaitems_response.status_code} - {mediaitems_response.text}")
 		exit(1)
 
-print(timestamps)
+
 
 # Delete the session
 print("Deleting the Picker session...")
@@ -91,6 +119,7 @@ delete_resp = requests.delete(
 		'Content-Type': 'application/json'
 	}
 )
+
 
 # Helper function to update file timestamps
 def set_file_date(file_name, iso_time):
@@ -113,31 +142,63 @@ def set_file_date(file_name, iso_time):
 		from win32_setctime import setctime
 		setctime(file_path, creation_time)  # Set creation time (Windows)
 		os.utime(file_path, (creation_time, creation_time))  # Set access/modification times
-		print(f"✓ {file_name}: {datetime.fromtimestamp(creation_time)}")
 	except Exception as e:
-		print(f"✗ {file_name}: Failed to set time - {e}")
+		print(f"{file_name}: Failed to set time - {e}")
+
+# Function to download video files
+def download_video(url, file_name, creation_time):
+	full_file_path = os.path.join(folder_path, file_name)
+	if filename_exists(full_file_path):
+		print(f"{file_name}: File already exists. Skipping download.")
+		return True
+
+	download_url = f"{url}=dv" # =dv for download video
+	request = urllib.request.Request(download_url, headers={
+		'Authorization': f'Bearer {access_token}',
+		'Content-Type': 'application/json'
+	})
+	
+	ATTEMPTS_COUNT = 5
+	for attempt in range(ATTEMPTS_COUNT):
+		try:
+			with urllib.request.urlopen(request) as response:
+				with open(full_file_path, "wb") as out_file:
+					shutil.copyfileobj(response, out_file)
+					set_file_date(full_file_path, creation_time)
+			return True
+
+		except Exception as e:
+			print(f"{file_name}: Error downloading on attempt {attempt+1}/{ATTEMPTS_COUNT} - {e}")
+
+	return False
+
 
 # Process selected media items
-print(f"\nUpdating file timestamps...\n")
+print(f"\nDownloading and updating metadata for {len(video_items)} video(s) in parallel...\n")
 
-files_updated = 0
-files_skipped = []
+total_videos = len(video_items)
+max_workers = max(1, min(32, total_videos))
+failure_count = 0
 
-for filename in os.listdir(folder_path):
-	if filename in timestamps:
-		set_file_date(filename, timestamps[filename])
-		files_updated += 1
-	else:
-		files_skipped.append(filename)
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+	futures = {executor.submit(download_video, video['baseUrl'], video['filename'], video['creationTime']): video for video in video_items}
+	for completed_count, future in enumerate(as_completed(futures), 1):
+		video = futures[future]
+		filename = video['filename']
+		try:
+			success = future.result()
+			if success:
+				print(f"Completed {completed_count}/{total_videos} - {filename}")
+			else:
+				print(f"Failed {completed_count}/{total_videos} - {filename}")
+				failure_count += 1
+		except Exception as e:
+			print(f"{filename}: Processing failed - {e}")
 
 # Report results
 print(f"\n{'='*50}")
-print(f"Summary: {files_updated} file(s) updated")
-
-if files_skipped:
-	print(f"Skipped {len(files_skipped)} file(s) which didn't have a corresponding timestamp in Google (or you didn't choose them in the Picker):")
-	for f in files_skipped:
-		print(f"  - {f}")
-
+print(f"Summary: {len(video_items) - failure_count} video(s) downloaded.")
+if failure_count > 0:
+	print(f"{failure_count} video(s) failed to download.")
 print(f"{'='*50}")
 print("Done!")
