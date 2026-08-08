@@ -32,8 +32,12 @@ Create a Desktop oauth client. Save the secret as `client_secret.json` in the sa
 In Data Access, give it the `.../auth/photospicker.mediaitems.readonly` scope.
 
 ## Usage
-Start a cmd window in the script's folder. Run the script without any parameters. Input the
-folder for where to download the video files when it asks for it.
+Start a cmd window in the script's folder. Run the script without any parameters:
+
+	.venv\Scripts\activate.bat
+	py .\download_videos.py
+
+Input the folder for where to download the video files when it asks for it.
 
 A browser window will open for you to log into your Google account. Then the Photo Picker
 browser window will open, select all photos/vidoes you want. The script will download
